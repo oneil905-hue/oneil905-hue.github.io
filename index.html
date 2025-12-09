@@ -233,8 +233,8 @@
         tempChart.update();
 
         // --- Traffic-light LED ---
-        const moistureBad = (vwc < 50);
-        const lightBad = (lux < 50);
+        const moistureBad = (vwc < 18);
+        const lightBad = (lux < 150);
         const ledStatus = document.getElementById("ledStatus");
 
         if (moistureBad && lightBad) ledStatus.style.backgroundColor = "red";
