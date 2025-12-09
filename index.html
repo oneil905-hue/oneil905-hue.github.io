@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Viva la Flora — Dashboard</title>
+
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; }
+    #sensors div, #sensors p { padding: 6px 0; font-size: 1.1rem; }
+    button { padding: 8px 12px; font-size: 1rem; margin-right: 5px; }
+    #ledStatus {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 1px solid #333;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Viva la Flora</h1>
+  </header>
+
+  <main>
+    <section id="sensors">
+      <p>Soil Moisture (VWC %): <span id="vwc">--</span></p>
+      <p>Light (Lux): <span id="lux">--</span></p>
+      <p>PPFD (µmol/m²/s): <span id="ppfd">--</span></p>
+      <p>Temperature (°C): <span id="temperature">--</span></p>
+      <p>Plant Status LED: <span id="ledStatus"></span></p>
+      <p>
+        Speaker: 
+        <button id="speakerOnBtn">ON</button>
+        <button id="speakerOffBtn">OFF</button>
+      </p>
+    </section>
+
+    <h2>Moisture Over Time</h2>
+    <canvas id="moistureChart"></canvas>
+
+    <h2>Light Over Time</h2>
+    <canvas id="lightChart"></canvas>
+
+    <h2>Temperature Over Time</h2>
+    <canvas id="temperatureChart"></canvas>
+
+    <section id="controls">
+      <button id="waterBtn">Water Plant</button>
+    </section>
+  </main>
+
+  <script>
+    const DEVICE_ID = '0a10aced202194944a069958';
+    const PARTICLE_TOKEN = '43cd7b5171e9c56c86a6b9cfa05a044f418d8cf1';
+
+    async function getVar(name) {
+      const url = `https://api.particle.io/v1/devices/${DEVICE_ID}/${name}`;
+      const r = await fetch(url, {
+        headers: { 'Authorization': 'Bearer ' + PARTICLE_TOKEN }
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error("Fetch error");
+      return JSON.parse(text).result;
+    }
+
+    async function callFunction(name, args='') {
+      const url = `https://api.particle.io/v1/devices/${DEVICE_ID}/${name}`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + PARTICLE_TOKEN,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: `args=${args}`
+      });
+    }
+
+    // --- Charts ---
+    const moistureCtx = document.getElementById("moistureChart").getContext("2d");
+    const lightCtx = document.getElementById("lightChart").getContext("2d");
+    const tempCtx = document.getElementById("temperatureChart").getContext("2d");
+
+    const moistureChart = new Chart(moistureCtx, {
+      type: "line",
+      data: { labels: [], datasets: [{ label: "Moisture", data: [], borderColor: "blue", borderWidth: 2, tension: 0.2 }] }
+    });
+
+    const lightChart = new Chart(lightCtx, {
+      type: "line",
+      data: {
+        labels: [],
+        datasets: [
+          { label: "Lux", data: [], borderColor: "orange", borderWidth: 2, tension: 0.2, yAxisID: "luxAxis" },
+          { label: "PPFD (µmol/m²/s)", data: [], borderColor: "green", borderWidth: 2, tension: 0.2, yAxisID: "ppfdAxis" }
+        ]
+      },
+      options: {
+        scales: {
+          luxAxis: { type: "linear", position: "left", title: { display: true, text: "Lux" } },
+          ppfdAxis: { type: "linear", position: "right", title: { display: true, text: "PPFD (µmol/m²/s)" } }
+        }
+      }
+    });
+
+    const tempChart = new Chart(tempCtx, {
+      type: "line",
+      data: { labels: [], datasets: [{ label: "Temperature", data: [], borderColor: "red", borderWidth: 2, tension: 0.2 }] }
+    });
+
+    async function updateAll() {
+      try {
+        const vwc = await getVar("vwc");
+        const lux = await getVar("lux");
+        const ppfd = await getVar("ppfd");
+        const temperature = await getVar("temperature");
+
+        document.getElementById("vwc").innerText = vwc.toFixed(1);
+        document.getElementById("lux").innerText = lux.toFixed(1);
+        document.getElementById("ppfd").innerText = ppfd.toFixed(1);
+        document.getElementById("temperature").innerText = temperature.toFixed(1);
+
+        const timeLabel = new Date().toLocaleTimeString();
+
+        moistureChart.data.labels.push(timeLabel);
+        moistureChart.data.datasets[0].data.push(vwc);
+        moistureChart.update();
+
+        lightChart.data.labels.push(timeLabel);
+        lightChart.data.datasets[0].data.push(lux);
+        lightChart.data.datasets[1].data.push(ppfd);
+        lightChart.update();
+
+        tempChart.data.labels.push(timeLabel);
+        tempChart.data.datasets[0].data.push(temperature);
+        tempChart.update();
+
+        // --- Traffic-light LED matching NeoPixel ---
+        const moistureBad = (vwc < 50);
+        const lightBad = (lux < 50);
+        const ledStatus = document.getElementById("ledStatus");
+
+        if (moistureBad && lightBad) ledStatus.style.backgroundColor = "red";
+        else if (moistureBad || lightBad) ledStatus.style.backgroundColor = "orange";
+        else ledStatus.style.backgroundColor = "green";
+
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // --- Water button ---
+    document.getElementById('waterBtn').addEventListener('click', async () => {
+      document.getElementById('waterBtn').disabled = true;
+      await callFunction("cmd", "water");
+      setTimeout(() => document.getElementById('waterBtn').disabled = false, 4000);
+    });
+
+    // --- Speaker buttons ---
+    document.getElementById('speakerOnBtn').addEventListener('click', async () => {
+      await callFunction("speaker", "on");
+    });
+    document.getElementById('speakerOffBtn').addEventListener('click', async () => {
+      await callFunction("speaker", "off");
+    });
+
+    updateAll();
+    setInterval(updateAll, 5000);
+  </script>
+</body>
+</html>
